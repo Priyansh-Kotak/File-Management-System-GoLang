@@ -105,13 +105,18 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"file-management/cache"
+	"file-management/models"
 	"file-management/utils"
 	"fmt"
 	"io" // Import utility functions for file handling
+	"log"
 	"net/http"
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/gorilla/mux"
 
 	"github.com/go-redis/redis/v8"
 )
@@ -282,9 +287,9 @@ func DeleteFileHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("File deleted successfully"))
 }
 
-func GetFilesHandler(w http.ResponseWriter, r *http.Request) {
+var ctx = utils.Ctx
 
-	ctx := utils.Ctx
+func GetFilesHandler(w http.ResponseWriter, r *http.Request) {
 
 	userEmail := r.Context().Value("userEmail").(string)
 
@@ -410,14 +415,100 @@ func ShareFileHandler(w http.ResponseWriter, r *http.Request) {
 //		json.NewEncoder(w).Encode(files)
 //	}
 
+// func SearchFilesHandler(w http.ResponseWriter, r *http.Request) {
+// 	userEmail := r.Context().Value("userEmail").(string)
+
+// 	// Retrieve user ID from the database
+// 	var userID int
+// 	err := db.QueryRow("SELECT id FROM users WHERE email = $1", userEmail).Scan(&userID)
+// 	if err != nil {
+// 		http.Error(w, "User not found", http.StatusUnauthorized)
+// 		return
+// 	}
+
+// 	// Retrieve search parameters from query
+// 	fileName := r.URL.Query().Get("file_name")
+// 	uploadDate := r.URL.Query().Get("upload_date")
+// 	fileType := r.URL.Query().Get("file_type")
+
+// 	// Check Redis cache
+// 	cacheKey := fmt.Sprintf("files:%d:%s", userID, fileName)
+// 	cachedData, err := redisClient.Get(r.Context(), cacheKey).Result()
+// 	if err == nil {
+// 		// Cache hit
+// 		w.Header().Set("Content-Type", "application/json")
+// 		w.Write([]byte(cachedData))
+// 		return
+// 	}
+
+// 	// Build the query
+// 	query := "SELECT id, file_name, file_size, s3_url, upload_date, file_type FROM files WHERE user_id = $1"
+// 	args := []interface{}{userID}
+
+// 	if fileName != "" {
+// 		query += " AND file_name ILIKE $" + strconv.Itoa(len(args)+1)
+// 		args = append(args, "%"+fileName+"%")
+// 	}
+// 	if uploadDate != "" {
+// 		query += " AND upload_date::date = $" + strconv.Itoa(len(args)+1)
+// 		args = append(args, uploadDate)
+// 	}
+// 	if fileType != "" {
+// 		query += " AND file_type = $" + strconv.Itoa(len(args)+1)
+// 		args = append(args, fileType)
+// 	}
+
+// 	// Debug: Print the query and arguments
+// 	fmt.Println("Query:", query)
+// 	fmt.Println("Args:", args)
+
+// 	rows, err := db.Query(query, args...)
+// 	if err != nil {
+// 		http.Error(w, "Error retrieving files: "+err.Error(), http.StatusInternalServerError)
+// 		return
+// 	}
+// 	defer rows.Close()
+
+// 	var files []File
+// 	for rows.Next() {
+// 		var file File
+// 		err := rows.Scan(&file.ID, &file.FileName, &file.FileSize, &file.S3URL, &file.UploadDate, &file.FileType)
+// 		if err != nil {
+// 			http.Error(w, "Error scanning files: "+err.Error(), http.StatusInternalServerError)
+// 			return
+// 		}
+// 		files = append(files, file)
+// 	}
+
+// 	// Cache the result
+// 	data, _ := json.Marshal(files)
+// 	redisClient.Set(r.Context(), cacheKey, string(data), 5*time.Minute)
+
+// 	// If no files are found, return an empty list
+// 	if len(files) == 0 {
+// 		w.WriteHeader(http.StatusNotFound)
+// 		json.NewEncoder(w).Encode([]File{})
+// 		return
+// 	}
+
+//		w.Header().Set("Content-Type", "application/json")
+//		json.NewEncoder(w).Encode(files)
+//	}
+var redisClient = cache.GetClient()
+
 func SearchFilesHandler(w http.ResponseWriter, r *http.Request) {
-	userEmail := r.Context().Value("userEmail").(string)
+	userEmail, ok := r.Context().Value("userEmail").(string)
+	if !ok || userEmail == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
 
 	// Retrieve user ID from the database
 	var userID int
 	err := db.QueryRow("SELECT id FROM users WHERE email = $1", userEmail).Scan(&userID)
 	if err != nil {
 		http.Error(w, "User not found", http.StatusUnauthorized)
+		fmt.Println("Error retrieving user ID:", err)
 		return
 	}
 
@@ -443,13 +534,13 @@ func SearchFilesHandler(w http.ResponseWriter, r *http.Request) {
 		args = append(args, fileType)
 	}
 
-	// Debug: Print the query and arguments
 	fmt.Println("Query:", query)
 	fmt.Println("Args:", args)
 
 	rows, err := db.Query(query, args...)
 	if err != nil {
-		http.Error(w, "Error retrieving files: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Error retrieving files", http.StatusInternalServerError)
+		fmt.Println("Error executing query:", err)
 		return
 	}
 	defer rows.Close()
@@ -457,15 +548,14 @@ func SearchFilesHandler(w http.ResponseWriter, r *http.Request) {
 	var files []File
 	for rows.Next() {
 		var file File
-		err := rows.Scan(&file.ID, &file.FileName, &file.FileSize, &file.S3URL, &file.UploadDate, &file.FileType)
-		if err != nil {
-			http.Error(w, "Error scanning files: "+err.Error(), http.StatusInternalServerError)
+		if err := rows.Scan(&file.ID, &file.FileName, &file.FileSize, &file.S3URL, &file.UploadDate, &file.FileType); err != nil {
+			http.Error(w, "Error scanning files", http.StatusInternalServerError)
+			fmt.Println("Error scanning rows:", err)
 			return
 		}
 		files = append(files, file)
 	}
 
-	// If no files are found, return an empty list
 	if len(files) == 0 {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode([]File{})
@@ -474,4 +564,56 @@ func SearchFilesHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(files)
+}
+
+// func UpdateFileMetadataHandler(w http.ResponseWriter, r *http.Request) {
+// 	// Example implementation
+// 	var updateRequest models.UpdateFileRequest
+// 	if err := json.NewDecoder(r.Body).Decode(&updateRequest); err != nil {
+// 		http.Error(w, "Invalid request payload", http.StatusBadRequest)
+// 		return
+// 	}
+
+// 	// Update database
+// 	_, err := db.Exec("UPDATE files SET file_name = $1, file_size = $2 WHERE id = $3", updateRequest.FileName, updateRequest.FileSize, updateRequest.UserID)
+// 	if err != nil {
+// 		http.Error(w, "Error updating file metadata", http.StatusInternalServerError)
+// 		return
+// 	}
+
+// 	// Invalidate the cache
+// 	cacheKey := fmt.Sprintf("files:%d:%s", updateRequest.UserID, *updateRequest.FileName)
+// 	redisClient.Del(r.Context(), cacheKey)
+
+// 	w.WriteHeader(http.StatusNoContent)
+// }
+// ctxx = context.Background()
+
+func UpdateFileHandler(w http.ResponseWriter, r *http.Request) {
+	// Extract file ID from URL parameters
+	vars := mux.Vars(r)
+	fileID := vars["id"]
+
+	// Parse the request body
+	var req models.UpdateFileRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request payload", http.StatusBadRequest)
+		return
+	}
+
+	// Update file metadata in the database
+	_, err := db.ExecContext(ctx, "UPDATE files SET file_name = $1 WHERE id = $2", req.FileName, fileID)
+	if err != nil {
+		http.Error(w, "Error updating file", http.StatusInternalServerError)
+		return
+	}
+
+	// Invalidate cache
+	cacheKey := "file:" + fileID
+	err = redisClient.Del(ctx, cacheKey).Err()
+	if err != nil {
+		log.Println("Error invalidating cache:", err)
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
