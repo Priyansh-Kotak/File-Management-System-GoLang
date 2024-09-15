@@ -156,8 +156,8 @@ func main() {
 	http.Handle("/login", http.HandlerFunc(handlers.LoginHandler))
 	http.Handle("/upload", middleware.AuthMiddleware(http.HandlerFunc(handlers.UploadFileHandler)))
 	http.Handle("/delete", middleware.AuthMiddleware(http.HandlerFunc(handlers.DeleteFileHandler)))
-	http.Handle("/files", middleware.AuthMiddleware(http.HandlerFunc(handlers.GetFilesHandler)))
+	// http.Handle("/files", middleware.AuthMiddleware(http.HandlerFunc(handlers.GetFilesHandler)))
 	http.Handle("/share", middleware.AuthMiddleware(http.HandlerFunc(handlers.ShareFileHandler)))
-
+	http.Handle("/files", middleware.AuthMiddleware(http.HandlerFunc(handlers.SearchFilesHandler))) // Add this line
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }

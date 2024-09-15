@@ -106,22 +106,35 @@ import (
 	"database/sql"
 	"encoding/json"
 	"file-management/utils"
+	"fmt"
 	"io" // Import utility functions for file handling
 	"net/http"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/go-redis/redis/v8"
 )
 
 var db *sql.DB // Initialize your database connection
 
+// type File struct {
+// 	ID         int    `json:"id"`
+// 	UserID     int    `json:"user_id"`
+// 	FileName   string `json:"file_name"`
+// 	FileSize   int    `json:"file_size"`
+// 	S3URL      string `json:"s3_url"`
+// 	UploadDate string `json:"upload_date"`
+// 	FileType   string `json:"file_type"`
+// }
+
 type File struct {
-	ID       int    `json:"id"`
-	UserID   int    `json:"user_id"`
-	FileName string `json:"file_name"`
-	FileSize int    `json:"file_size"`
-	S3URL    string `json:"s3_url"`
+	ID         int            `json:"id"`
+	FileName   string         `json:"file_name"`
+	FileSize   int            `json:"file_size"`
+	S3URL      string         `json:"s3_url"`
+	UploadDate time.Time      `json:"upload_date"`
+	FileType   sql.NullString `json:"file_type"`
 }
 
 // func UploadFileHandler(w http.ResponseWriter, r *http.Request) {
@@ -341,4 +354,124 @@ func ShareFileHandler(w http.ResponseWriter, r *http.Request) {
 	publicURL := file.S3URL
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(publicURL))
+}
+
+// func SearchFilesHandler(w http.ResponseWriter, r *http.Request) {
+// 	userEmail := r.Context().Value("userEmail").(string)
+
+// 	// Retrieve user ID from the database
+// 	var userID int
+// 	err := db.QueryRow("SELECT id FROM users WHERE email = $1", userEmail).Scan(&userID)
+// 	if err != nil {
+// 		http.Error(w, "User not found", http.StatusUnauthorized)
+// 		return
+// 	}
+
+// 	// Retrieve search parameters from query
+// 	fileName := r.URL.Query().Get("file_name")
+// 	uploadDate := r.URL.Query().Get("upload_date")
+// 	fileType := r.URL.Query().Get("file_type")
+
+// 	// Build the query
+// 	query := "SELECT id, file_name, file_size, s3_url, upload_date, file_type FROM files WHERE user_id = $1"
+// 	args := []interface{}{userID}
+
+// 	if fileName != "" {
+// 		query += " AND file_name ILIKE $2"
+// 		args = append(args, "%"+fileName+"%")
+// 	}
+// 	if uploadDate != "" {
+// 		query += " AND upload_date::date = $3"
+// 		args = append(args, uploadDate)
+// 	}
+// 	if fileType != "" {
+// 		query += " AND file_type = $4"
+// 		args = append(args, fileType)
+// 	}
+
+// 	rows, err := db.Query(query, args...)
+// 	if err != nil {
+// 		http.Error(w, "Error retrieving files", http.StatusInternalServerError)
+// 		return
+// 	}
+// 	defer rows.Close()
+
+// 	var files []File
+// 	for rows.Next() {
+// 		var file File
+// 		if err := rows.Scan(&file.ID, &file.FileName, &file.FileSize, &file.S3URL, &file.UploadDate, &file.FileType); err != nil {
+// 			http.Error(w, "Error scanning files", http.StatusInternalServerError)
+// 			return
+// 		}
+// 		files = append(files, file)
+// 	}
+
+//		w.Header().Set("Content-Type", "application/json")
+//		json.NewEncoder(w).Encode(files)
+//	}
+
+func SearchFilesHandler(w http.ResponseWriter, r *http.Request) {
+	userEmail := r.Context().Value("userEmail").(string)
+
+	// Retrieve user ID from the database
+	var userID int
+	err := db.QueryRow("SELECT id FROM users WHERE email = $1", userEmail).Scan(&userID)
+	if err != nil {
+		http.Error(w, "User not found", http.StatusUnauthorized)
+		return
+	}
+
+	// Retrieve search parameters from query
+	fileName := r.URL.Query().Get("file_name")
+	uploadDate := r.URL.Query().Get("upload_date")
+	fileType := r.URL.Query().Get("file_type")
+
+	// Build the query
+	query := "SELECT id, file_name, file_size, s3_url, upload_date, file_type FROM files WHERE user_id = $1"
+	args := []interface{}{userID}
+
+	if fileName != "" {
+		query += " AND file_name ILIKE $" + strconv.Itoa(len(args)+1)
+		args = append(args, "%"+fileName+"%")
+	}
+	if uploadDate != "" {
+		query += " AND upload_date::date = $" + strconv.Itoa(len(args)+1)
+		args = append(args, uploadDate)
+	}
+	if fileType != "" {
+		query += " AND file_type = $" + strconv.Itoa(len(args)+1)
+		args = append(args, fileType)
+	}
+
+	// Debug: Print the query and arguments
+	fmt.Println("Query:", query)
+	fmt.Println("Args:", args)
+
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		http.Error(w, "Error retrieving files: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var files []File
+	for rows.Next() {
+		var file File
+		err := rows.Scan(&file.ID, &file.FileName, &file.FileSize, &file.S3URL, &file.UploadDate, &file.FileType)
+		if err != nil {
+			http.Error(w, "Error scanning files: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		files = append(files, file)
+	}
+
+	// If no files are found, return an empty list
+	if len(files) == 0 {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode([]File{})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(files)
 }
