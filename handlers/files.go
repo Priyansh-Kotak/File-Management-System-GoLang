@@ -104,9 +104,14 @@ package handlers
 
 import (
 	"database/sql"
+	"encoding/json"
+	"file-management/utils"
 	"io" // Import utility functions for file handling
 	"net/http"
 	"os"
+	"strconv"
+
+	"github.com/go-redis/redis/v8"
 )
 
 var db *sql.DB // Initialize your database connection
@@ -262,4 +267,78 @@ func DeleteFileHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("File deleted successfully"))
+}
+
+func GetFilesHandler(w http.ResponseWriter, r *http.Request) {
+
+	ctx := utils.Ctx
+
+	userEmail := r.Context().Value("userEmail").(string)
+
+	// Retrieve user ID from database
+	var userID int
+	err := db.QueryRow("SELECT id FROM users WHERE email = $1", userEmail).Scan(&userID)
+	if err != nil {
+		http.Error(w, "User not found", http.StatusUnauthorized)
+		return
+	}
+
+	// Check Redis cache first
+	cacheKey := "files_user_" + strconv.Itoa(userID)
+	cachedData, err := utils.RedisClient.Get(ctx, cacheKey).Result()
+	if err == redis.Nil {
+		// If not in cache, query the database
+		rows, err := db.Query("SELECT id, file_name, file_size, s3_url FROM files WHERE user_id = $1", userID)
+		if err != nil {
+			http.Error(w, "Error retrieving files", http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		var files []File
+		for rows.Next() {
+			var file File
+			if err := rows.Scan(&file.ID, &file.FileName, &file.FileSize, &file.S3URL); err != nil {
+				http.Error(w, "Error scanning file data", http.StatusInternalServerError)
+				return
+			}
+			files = append(files, file)
+		}
+
+		// Cache metadata in Redis
+		fileData, _ := json.Marshal(files)
+		utils.RedisClient.Set(ctx, cacheKey, fileData, 0)
+
+		// Send response
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(files)
+	} else if err != nil {
+		http.Error(w, "Error fetching cache", http.StatusInternalServerError)
+	} else {
+		// Return cached data
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(cachedData))
+	}
+}
+
+func ShareFileHandler(w http.ResponseWriter, r *http.Request) {
+	// Get file ID from URL path
+	fileID := r.URL.Query().Get("file_id")
+	if fileID == "" {
+		http.Error(w, "Missing file ID", http.StatusBadRequest)
+		return
+	}
+
+	// Retrieve file metadata from the database
+	var file File
+	err := db.QueryRow("SELECT file_name, s3_url FROM files WHERE id = $1", fileID).Scan(&file.FileName, &file.S3URL)
+	if err != nil {
+		http.Error(w, "File not found", http.StatusNotFound)
+		return
+	}
+
+	// Send the public link for sharing
+	publicURL := file.S3URL
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(publicURL))
 }

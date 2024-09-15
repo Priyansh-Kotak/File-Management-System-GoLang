@@ -1,11 +1,14 @@
 package utils
 
 import (
+	"context"
 	"io"
 	"os"
 )
 
 // SaveFileLocally saves a file to the local storage
+var Ctx = context.Background()
+
 func SaveFileLocally(file io.Reader, fileName string) error {
 	out, err := os.Create("./uploads/" + fileName)
 	if err != nil {

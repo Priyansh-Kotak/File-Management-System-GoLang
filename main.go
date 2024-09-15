@@ -110,6 +110,7 @@ import (
 	"database/sql"
 	"file-management/handlers"
 	"file-management/middleware"
+	"file-management/utils"
 	"log"
 	"net/http"
 	"os"
@@ -122,6 +123,9 @@ var db *sql.DB
 var jwtSecret string
 
 func main() {
+
+	utils.InitRedis()
+
 	// Load environment variables from .env file
 	err := godotenv.Load()
 	if err != nil {
@@ -152,6 +156,8 @@ func main() {
 	http.Handle("/login", http.HandlerFunc(handlers.LoginHandler))
 	http.Handle("/upload", middleware.AuthMiddleware(http.HandlerFunc(handlers.UploadFileHandler)))
 	http.Handle("/delete", middleware.AuthMiddleware(http.HandlerFunc(handlers.DeleteFileHandler)))
+	http.Handle("/files", middleware.AuthMiddleware(http.HandlerFunc(handlers.GetFilesHandler)))
+	http.Handle("/share", middleware.AuthMiddleware(http.HandlerFunc(handlers.ShareFileHandler)))
 
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
