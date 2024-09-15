@@ -419,7 +419,7 @@ import (
 	"github.com/dgrijalva/jwt-go"
 )
 
-var db *sql.DB
+// var db *sql.DB
 var jwtSecret string
 
 func init() {

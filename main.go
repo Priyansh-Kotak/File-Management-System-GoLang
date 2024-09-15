@@ -46,11 +46,13 @@
 // 	http.ListenAndServe(":8080", nil)
 // }
 
+
 package main
 
 import (
 	"database/sql"
 	"file-management/handlers"
+	"file-management/middleware"
 	"log"
 	"net/http"
 	"os"
@@ -89,7 +91,16 @@ func main() {
 	}
 	log.Println("Database connection established")
 
-	http.HandleFunc("/register", handlers.RegisterHandler)
-	http.HandleFunc("/login", handlers.LoginHandler)
+	// http.HandleFunc("/register", handlers.RegisterHandler)
+	// http.HandleFunc("/login", handlers.LoginHandler)
+	// http.Handle("/upload", middleware.AuthMiddleware(http.HandlerFunc(handlers.UploadFileHandler)))
+	// http.Handle("/delete", middleware.AuthMiddleware(http.HandlerFunc(handlers.DeleteFileHandler)))
+	http.Handle("/register", http.HandlerFunc(handlers.RegisterHandler))
+	http.Handle("/login", http.HandlerFunc(handlers.LoginHandler))
+
+	// Use the AuthMiddleware for file management routes
+	http.Handle("/upload", middleware.AuthMiddleware(http.HandlerFunc(handlers.UploadFileHandler)))
+	http.Handle("/delete", middleware.AuthMiddleware(http.HandlerFunc(handlers.DeleteFileHandler)))
+
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
