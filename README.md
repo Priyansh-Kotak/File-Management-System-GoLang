@@ -1,6 +1,3 @@
-Here’s a **clean, professional `README.md`** you can directly use for your GitHub repository, based strictly on your text but structured properly 👇
-
----
 
 # File Management System – GoLang
 
